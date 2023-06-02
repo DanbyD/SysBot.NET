@@ -1,13 +1,13 @@
 ﻿using System;
-using System.Net;
 using System.Net.Http;
 using DoDo.Open.Sdk.Models.Bots;
+using DoDo.Open.Sdk.Models.ChannelMessages;
 using DoDo.Open.Sdk.Models.Events;
 using DoDo.Open.Sdk.Models.Messages;
-using DoDo.Open.Sdk.Models.Personals;
 using DoDo.Open.Sdk.Services;
 using PKHeX.Core;
 using SysBot.Base;
+using SysBot.Pokemon.Helpers;
 
 namespace SysBot.Pokemon.Dodo
 {
@@ -15,14 +15,16 @@ namespace SysBot.Pokemon.Dodo
     {
         private readonly OpenApiService _openApiService;
         private static readonly string LogIdentity = "DodoBot";
-        private static readonly string Welcome = "at我并尝试对我说：\n皮卡丘\ntrade ps代码\n或者直接拖一个文件进来";
+        private static readonly string Welcome = "at我并尝试对我说：\n皮卡丘\nps代码\n或者直接拖一个文件进来";
         private readonly string _channelId;
+        private DodoSettings _dodoSettings;
         private string _botDodoSourceId = default!;
 
-        public PokemonProcessService(OpenApiService openApiService, string channelId)
+        public PokemonProcessService(OpenApiService openApiService, DodoSettings settings)
         {
             _openApiService = openApiService;
-            _channelId = channelId;
+            _channelId = settings.ChannelId;
+            _dodoSettings = settings;
         }
 
         public override void Connected(string message)
@@ -64,19 +66,22 @@ namespace SysBot.Pokemon.Dodo
 
             if (eventBody.MessageBody is MessageBodyFile messageBodyFile)
             {
-                if (!ValidFileSize(messageBodyFile.Size ?? 0) || !ValidFileName(messageBodyFile.Name))
+                if (!FileTradeHelper<TP>.ValidFileSize(messageBodyFile.Size ?? 0) || !FileTradeHelper<TP>.ValidFileName(messageBodyFile.Name))
                 {
+                    ProcessWithdraw(eventBody.MessageId);
                     DodoBot<TP>.SendChannelMessage("非法文件", eventBody.ChannelId);
                     return;
                 }
                 using var client = new HttpClient();
                 var downloadBytes = client.GetByteArrayAsync(messageBodyFile.Url).Result;
-                var p = GetPKM(downloadBytes);
-                if (p is TP pkm)
-                {
-                    DodoHelper<TP>.StartTrade(pkm, eventBody.DodoSourceId, eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId);
-                }
-
+                var pkms = FileTradeHelper<TP>.Bin2List(downloadBytes);
+                ProcessWithdraw(eventBody.MessageId);
+                if (pkms.Count == 1) 
+                    new DodoTrade<TP>(ulong.Parse(eventBody.DodoSourceId), eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId).StartTradePKM(pkms[0]);
+                else if (pkms.Count > 1 && pkms.Count <= FileTradeHelper<TP>.MaxCountInBin) 
+                    new DodoTrade<TP>(ulong.Parse(eventBody.DodoSourceId), eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId).StartTradeMultiPKM(pkms);
+                else
+                    DodoBot<TP>.SendChannelMessage("文件内容不正确", eventBody.ChannelId);
                 return;
             }
 
@@ -92,25 +97,28 @@ namespace SysBot.Pokemon.Dodo
             if (!content.Contains($"<@!{_botDodoSourceId}>")) return;
 
             content = content.Substring(content.IndexOf('>') + 1);
-            if (content.Trim().StartsWith("trade"))
+            if (typeof(TP) == typeof(PK9) && content.Contains("\n\n") && ShowdownTranslator<TP>.IsPS(content))// 仅SV支持批量，其他偷懒还没写
             {
-                content = content.Replace("trade", "");
-                DodoHelper<TP>.StartTrade(content, eventBody.DodoSourceId, eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId);
+                ProcessWithdraw(eventBody.MessageId);
+                new DodoTrade<TP>(ulong.Parse(eventBody.DodoSourceId), eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId).StartTradeMultiPs(content.Trim());
                 return;
-            } 
+            }
+            else if (ShowdownTranslator<TP>.IsPS(content))
+            {
+                ProcessWithdraw(eventBody.MessageId);
+                new DodoTrade<TP>(ulong.Parse(eventBody.DodoSourceId), eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId).StartTradePs(content.Trim());
+                return;
+            }
             else if (content.Trim().StartsWith("dump"))
             {
-                DodoHelper<TP>.StartDump(eventBody.DodoSourceId, eventBody.Personal.NickName, eventBody.ChannelId);
+                ProcessWithdraw(eventBody.MessageId);
+                new DodoTrade<TP>(ulong.Parse(eventBody.DodoSourceId), eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId).StartDump();
                 return;
             }
-            else if (typeof(TP) == typeof(PK9) && content.Trim().Contains("+"))// 仅SV支持批量，其他偷懒还没写
+            else if (typeof(TP) == typeof(PK9) && content.Trim().Contains('+'))// 仅SV支持批量，其他偷懒还没写
             {
-                DodoHelper<TP>.StartTradeMultiChinese(content.Trim(), eventBody.DodoSourceId, eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId);
-                return;
-            }
-            else if (typeof(TP) == typeof(PK9) && content.Trim().Contains("队伍"))// 仅SV支持批量，其他偷懒还没写
-            {
-                DodoHelper<TP>.StartTradeMultiPs(content.Replace("队伍", "").Trim(), eventBody.DodoSourceId, eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId);
+                ProcessWithdraw(eventBody.MessageId);
+                new DodoTrade<TP>(ulong.Parse(eventBody.DodoSourceId), eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId).StartTradeMultiChinesePs(content.Trim());
                 return;
             }
 
@@ -118,7 +126,8 @@ namespace SysBot.Pokemon.Dodo
             if (!string.IsNullOrWhiteSpace(ps))
             {
                 LogUtil.LogInfo($"收到命令\n{ps}", LogIdentity);
-                DodoHelper<TP>.StartTrade(ps, eventBody.DodoSourceId, eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId);
+                ProcessWithdraw(eventBody.MessageId);
+                new DodoTrade<TP>(ulong.Parse(eventBody.DodoSourceId), eventBody.Personal.NickName, eventBody.ChannelId, eventBody.IslandSourceId).StartTradePs(ps);
             }
             else if (content.Contains("取消"))
             {
@@ -161,36 +170,12 @@ namespace SysBot.Pokemon.Dodo
             };
         }
 
-        private static bool ValidFileSize(long size)
+        private void ProcessWithdraw(string messageId)
         {
-            if (typeof(TP) == typeof(PK8) || typeof(TP) == typeof(PB8) || typeof(TP) == typeof(PK9))
+            if (_dodoSettings.WithdrawTradeMessage)
             {
-                return size == 344;
-            }
-
-            if (typeof(TP) == typeof(PA8))
-            {
-                return size == 376;
-            }
-
-            return false;
-        }
-
-        private static bool ValidFileName(string fileName)
-        {
-            return (typeof(TP) == typeof(PK8) && fileName.EndsWith("pk8", StringComparison.OrdinalIgnoreCase)
-                    || typeof(TP) == typeof(PB8) && fileName.EndsWith("pb8", StringComparison.OrdinalIgnoreCase)
-                    || typeof(TP) == typeof(PA8) && fileName.EndsWith("pa8", StringComparison.OrdinalIgnoreCase)
-                    || typeof(TP) == typeof(PK9) && fileName.EndsWith("pk9", StringComparison.OrdinalIgnoreCase));
-        }
-
-        private static PKM? GetPKM(byte[] bytes)
-        {
-            if (typeof(TP) == typeof(PK8)) return new PK8(bytes);
-            else if (typeof(TP) == typeof(PB8)) return new PB8(bytes);
-            else if (typeof(TP) == typeof(PA8)) return new PA8(bytes);
-            else if (typeof(TP) == typeof(PK9)) return new PK9(bytes);
-            return null;
+                DodoBot<TP>.OpenApiService.SetChannelMessageWithdraw(new SetChannelMessageWithdrawInput() { MessageId = messageId }, true);
+            }  
         }
 
         public override void MessageReactionEvent(
@@ -198,5 +183,6 @@ namespace SysBot.Pokemon.Dodo
         {
             // Do nothing
         }
+
     }
 }

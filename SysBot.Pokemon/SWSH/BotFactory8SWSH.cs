@@ -1,9 +1,9 @@
-﻿using System;
-using PKHeX.Core;
+﻿using PKHeX.Core;
+using System;
 
 namespace SysBot.Pokemon
 {
-    public sealed class BotFactory8 : BotFactory<PK8>
+    public sealed class BotFactory8SWSH : BotFactory<PK8>
     {
         public override PokeRoutineExecutorBase CreateBot(PokeTradeHub<PK8> Hub, PokeBotState cfg) => cfg.NextRoutineType switch
         {
@@ -13,16 +13,16 @@ namespace SysBot.Pokemon
                 or PokeRoutineType.Clone
                 or PokeRoutineType.Dump
                 or PokeRoutineType.SeedCheck
-                => new PokeTradeBot(Hub, cfg),
+                => new PokeTradeBotSWSH(Hub, cfg),
 
-            PokeRoutineType.EggFetch => new EggBot(cfg, Hub),
-            PokeRoutineType.FossilBot => new FossilBot(cfg, Hub),
-            PokeRoutineType.RaidBot => new RaidBot(cfg, Hub),
-            PokeRoutineType.EncounterLine => new EncounterBotLine(cfg, Hub),
-            PokeRoutineType.Reset => new EncounterBotReset(cfg, Hub),
-            PokeRoutineType.Dogbot => new EncounterBotDog(cfg, Hub),
+            PokeRoutineType.RaidBot => new RaidBotSWSH(cfg, Hub),
+            PokeRoutineType.EncounterLine => new EncounterBotLineSWSH(cfg, Hub),
+            PokeRoutineType.EggFetch => new EncounterBotEggSWSH(cfg, Hub),
+            PokeRoutineType.FossilBot => new EncounterBotFossilSWSH(cfg, Hub),
+            PokeRoutineType.Reset => new EncounterBotResetSWSH(cfg, Hub),
+            PokeRoutineType.DogBot => new EncounterBotDogSWSH(cfg, Hub),
 
-            PokeRoutineType.RemoteControl => new RemoteControlBot(cfg),
+            PokeRoutineType.RemoteControl => new RemoteControlBotSWSH(cfg),
             _ => throw new ArgumentException(nameof(cfg.NextRoutineType)),
         };
 
@@ -36,12 +36,12 @@ namespace SysBot.Pokemon
                 or PokeRoutineType.SeedCheck
                 => true,
 
-            PokeRoutineType.EggFetch => true,
-            PokeRoutineType.FossilBot => true,
             PokeRoutineType.RaidBot => true,
             PokeRoutineType.EncounterLine => true,
+            PokeRoutineType.EggFetch => true,
+            PokeRoutineType.FossilBot => true,
             PokeRoutineType.Reset => true,
-            PokeRoutineType.Dogbot => true,
+            PokeRoutineType.DogBot => true,
 
             PokeRoutineType.RemoteControl => true,
 

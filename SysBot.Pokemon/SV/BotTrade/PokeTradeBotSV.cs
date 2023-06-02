@@ -1,8 +1,8 @@
-﻿using System.Linq;
-using PKHeX.Core;
+﻿using PKHeX.Core;
 using PKHeX.Core.Searching;
 using SysBot.Base;
 using System;
+using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,13 +17,9 @@ namespace SysBot.Pokemon
     {
         private readonly PokeTradeHub<PK9> Hub;
         private readonly TradeSettings TradeSettings;
-        private readonly TradeAbuseSettings AbuseSettings;
+        public readonly TradeAbuseSettings AbuseSettings;
 
         public ICountSettings Counts => TradeSettings;
-
-        private static readonly TrackedUserLog PreviousUsers = new();
-        private static readonly TrackedUserLog PreviousUsersDistribution = new();
-        private static readonly TrackedUserLog EncounteredUsers = new();
 
         /// <summary>
         /// Folder to dump received trade data to.
@@ -341,10 +337,10 @@ namespace SysBot.Pokemon
             var tradePartnerFullInfo = await GetTradePartnerFullInfo(token).ConfigureAwait(false);
             var tradePartner = new TradePartnerSV(tradePartnerFullInfo);
             var trainerNID = await GetTradePartnerNID(TradePartnerNIDOffset, token).ConfigureAwait(false);
-            RecordUtil<PokeTradeBot>.Record($"Initiating\t{trainerNID:X16}\t{tradePartner.TrainerName}\t{poke.Trainer.TrainerName}\t{poke.Trainer.ID}\t{poke.ID}\t{toSend.EncryptionConstant:X8}");
+            RecordUtil<PokeTradeBotSWSH>.Record($"Initiating\t{trainerNID:X16}\t{tradePartner.TrainerName}\t{poke.Trainer.TrainerName}\t{poke.Trainer.ID}\t{poke.ID}\t{toSend.EncryptionConstant:X8}");
             Log($"Found Link Trade partner: {tradePartner.TrainerName}-{tradePartner.TID7} (ID: {trainerNID})");
 
-            var partnerCheck = CheckPartnerReputation(poke, trainerNID, tradePartner.TrainerName);
+            var partnerCheck = await CheckPartnerReputation(this, poke, trainerNID, tradePartner.TrainerName, AbuseSettings, PreviousUsers, PreviousUsersDistribution, token);
             if (partnerCheck != PokeTradeResult.Success)
             {
                 await Click(A, 1_000, token).ConfigureAwait(false); // Ensures we dismiss a popup.
@@ -369,10 +365,10 @@ namespace SysBot.Pokemon
                 await ExitTradeToPortal(false, token).ConfigureAwait(false);
                 return result;
             }
-            List<PK9> batchPK9s = (List<PK9>)poke.Context.GetValueOrDefault("批量", new List<PK9> { toSend });
-            List<bool> foreignList = (List<bool>)poke.Context.GetValueOrDefault("异国", new List<bool> { false });
+            List<PK9> batchPK9s = (List<PK9>)poke.Context.GetValueOrDefault("batch", new List<PK9> { toSend });
+            List<bool> skipAutoOTList = (List<bool>)poke.Context.GetValueOrDefault("skipAutoOTList", new List<bool> { false });
             PK9 received = default!;
-            LogUtil.LogInfo($"count:{batchPK9s.Count}, foreignList:{String.Join(',', foreignList)}", nameof(PokeTradeBotSV));
+            LogUtil.LogInfo($"count:{batchPK9s.Count}, skipAutoOTList:{String.Join(',', skipAutoOTList)}", nameof(PokeTradeBotSV));
             for (var i = 0; i < batchPK9s.Count; i++)
             {
                 var pk9 = batchPK9s[i];
@@ -380,9 +376,9 @@ namespace SysBot.Pokemon
                 {
                     await SetBoxPokemonAbsolute(BoxStartOffset, pk9, token, sav).ConfigureAwait(false);
                 }
-                if (batchPK9s.Count > 1) poke.SendNotification(this, $"批量:等待交换第{i+1}个宝可梦{ShowdownTranslator<PK9>.GameStringsZh.Species[pk9.Species]}");
+                if (batchPK9s.Count > 1) poke.SendNotification(this, $"批量:等待交换第{i+1}只宝可梦{ShowdownTranslator<PK9>.GameStringsZh.Species[pk9.Species]}");
                 
-                var needUseTradePartnerInfo = !foreignList[i];
+                var needUseTradePartnerInfo = !skipAutoOTList[i];
                 if (Hub.Config.Legality.UseTradePartnerInfo && needUseTradePartnerInfo)
                 {
                     await SetBoxPkmWithSwappedIDDetailsSV(pk9, tradePartnerFullInfo, sav, token);
@@ -425,7 +421,7 @@ namespace SysBot.Pokemon
                     await ExitTradeToPortal(false, token).ConfigureAwait(false);
                     return tradeResult;
                 }
-                if (batchPK9s.Count > 1) poke.SendNotification(this, $"批量:第{i + 1}个宝可梦{ShowdownTranslator<PK9>.GameStringsZh.Species[pk9.Species]}交换完成");
+                if (batchPK9s.Count > 1) poke.SendNotification(this, $"批量:第{i + 1}只宝可梦{ShowdownTranslator<PK9>.GameStringsZh.Species[pk9.Species]}交换完成");
 
                 if (token.IsCancellationRequested)
                 {
@@ -454,6 +450,9 @@ namespace SysBot.Pokemon
             Log("User completed the trade.");
             poke.TradeFinished(this, received);
 
+
+            // Log for Trade Abuse tracking.
+            LogSuccessfulTrades(poke, trainerNID, tradePartner.TrainerName);
 
             // Sometimes they offered another mon, so store that immediately upon leaving Union Room.
             lastOffered = await SwitchConnection.ReadBytesAbsoluteAsync(TradePartnerOfferedOffset, 8, token).ConfigureAwait(false);
@@ -491,6 +490,11 @@ namespace SysBot.Pokemon
             {
                 if (await IsUserBeingShifty(detail, token).ConfigureAwait(false))
                     return PokeTradeResult.SuspiciousActivity;
+
+                // We can fall out of the box if the user offers, then quits.
+                if (!await IsInBox(PortalOffset, token).ConfigureAwait(false))
+                    return PokeTradeResult.TrainerLeft;
+
                 await Click(A, 1_000, token).ConfigureAwait(false);
 
                 // EC is detectable at the start of the animation.

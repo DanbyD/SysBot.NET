@@ -37,8 +37,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SysBot.Pokemon.Bilibili", "
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SysBot.Pokemon.Dodo", "SysBot.Pokemon.Dodo\SysBot.Pokemon.Dodo.csproj", "{BE43311D-4571-466E-B3CB-3FD658EFC159}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SysBot.Pokemon.Kook", "SysBot.Pokemon.Kook\SysBot.Pokemon.Kook.csproj", "{BDD41990-5801-4C75-A08C-C248BC627D3E}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -90,7 +88,7 @@ Global
 		{886B1440-B333-4095-8E44-D71D043D20A9}.Debug|x64.Build.0 = Debug|x64
 		{886B1440-B333-4095-8E44-D71D043D20A9}.Debug|x86.ActiveCfg = Debug|x86
 		{886B1440-B333-4095-8E44-D71D043D20A9}.Debug|x86.Build.0 = Debug|x86
-		{886B1440-B333-4095-8E44-D71D043D20A9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{886B1440-B333-4095-8E44-D71D043D20A9}.Release|Any CPU.ActiveCfg = Release|x64
 		{886B1440-B333-4095-8E44-D71D043D20A9}.Release|x64.ActiveCfg = Release|x64
 		{886B1440-B333-4095-8E44-D71D043D20A9}.Release|x64.Build.0 = Release|x64
 		{886B1440-B333-4095-8E44-D71D043D20A9}.Release|x86.ActiveCfg = Release|x86
@@ -124,7 +122,7 @@ Global
 		{C0525606-4ED4-4998-9AF3-31E2DE65717A}.Debug|x64.Build.0 = Debug|x64
 		{C0525606-4ED4-4998-9AF3-31E2DE65717A}.Debug|x86.ActiveCfg = Debug|x86
 		{C0525606-4ED4-4998-9AF3-31E2DE65717A}.Debug|x86.Build.0 = Debug|x86
-		{C0525606-4ED4-4998-9AF3-31E2DE65717A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C0525606-4ED4-4998-9AF3-31E2DE65717A}.Release|Any CPU.ActiveCfg = Release|x64
 		{C0525606-4ED4-4998-9AF3-31E2DE65717A}.Release|x64.ActiveCfg = Release|x64
 		{C0525606-4ED4-4998-9AF3-31E2DE65717A}.Release|x64.Build.0 = Release|x64
 		{C0525606-4ED4-4998-9AF3-31E2DE65717A}.Release|x86.ActiveCfg = Release|x86
@@ -187,18 +185,6 @@ Global
 		{BE43311D-4571-466E-B3CB-3FD658EFC159}.Release|x64.Build.0 = Release|Any CPU
 		{BE43311D-4571-466E-B3CB-3FD658EFC159}.Release|x86.ActiveCfg = Release|Any CPU
 		{BE43311D-4571-466E-B3CB-3FD658EFC159}.Release|x86.Build.0 = Release|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Debug|x64.Build.0 = Debug|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Debug|x86.Build.0 = Debug|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Release|Any CPU.Build.0 = Release|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Release|x64.ActiveCfg = Release|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Release|x64.Build.0 = Release|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Release|x86.ActiveCfg = Release|Any CPU
-		{BDD41990-5801-4C75-A08C-C248BC627D3E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

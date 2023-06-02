@@ -1,8 +1,8 @@
-﻿using System.Collections.Generic;
-using PKHeX.Core;
+﻿using PKHeX.Core;
+using SysBot.Base;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading;
-using SysBot.Base;
 
 namespace SysBot.Pokemon
 {
@@ -21,10 +21,10 @@ namespace SysBot.Pokemon
         public int MaxTradeConfirmTime { get; set; } = 25;
 
         [Category(TradeCode), Description("Minimum Link Code.")]
-        public int MinTradeCode { get; set; } = 8180;
+        public int MinTradeCode { get; set; } = 0;
 
         [Category(TradeCode), Description("Maximum Link Code.")]
-        public int MaxTradeCode { get; set; } = 8199;
+        public int MaxTradeCode { get; set; } = 9999_9999;
 
         [Category(Dumping), Description("Dump Trade: Dumping routine will stop after a maximum number of dumps from a single user.")]
         public int MaxDumpsPerTrade { get; set; } = 20;
@@ -32,7 +32,7 @@ namespace SysBot.Pokemon
         [Category(Dumping), Description("Dump Trade: Dumping routine will stop after spending x seconds in trade.")]
         public int MaxDumpTradeTime { get; set; } = 180;
 
-        [Category(Dumping), Description("Dump Trade: Dumping routine will stop after spending x seconds in trade.")]
+        [Category(Dumping), Description("Dump Trade: If enabled, Dumping routine will output legality check information to the user.")]
         public bool DumpTradeLegalityCheck { get; set; } = true;
 
         [Category(TradeConfig), Description("When enabled, the screen will be turned off during normal bot loop operation to save power.")]
@@ -99,7 +99,7 @@ namespace SysBot.Pokemon
 
         public void AddCompletedTrade() => Interlocked.Increment(ref _completedTrades);
         public void AddCompletedSeedCheck() => Interlocked.Increment(ref _completedSeedChecks);
-        public void AddCompletedSurprise() =>Interlocked.Increment(ref _completedSurprise);
+        public void AddCompletedSurprise() => Interlocked.Increment(ref _completedSurprise);
         public void AddCompletedDistribution() => Interlocked.Increment(ref _completedDistribution);
         public void AddCompletedDumps() => Interlocked.Increment(ref _completedDumps);
         public void AddCompletedClones() => Interlocked.Increment(ref _completedClones);

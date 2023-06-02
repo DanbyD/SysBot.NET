@@ -1,27 +1,23 @@
-﻿using System.Linq;
-using PKHeX.Core;
+﻿using PKHeX.Core;
 using PKHeX.Core.Searching;
 using SysBot.Base;
 using System;
+using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using static SysBot.Base.SwitchButton;
-using static SysBot.Pokemon.PokeDataOffsets;
+using static SysBot.Pokemon.PokeDataOffsetsSWSH;
 
 namespace SysBot.Pokemon
 {
-    public class PokeTradeBot : PokeRoutineExecutor8, ICountBot
+    public class PokeTradeBotSWSH : PokeRoutineExecutor8SWSH, ICountBot
     {
         public static ISeedSearchHandler<PK8> SeedChecker = new NoSeedSearchHandler<PK8>();
         private readonly PokeTradeHub<PK8> Hub;
         private readonly TradeSettings TradeSettings;
         private readonly TradeAbuseSettings AbuseSettings;
         public ICountSettings Counts => TradeSettings;
-
-        private static readonly TrackedUserLog PreviousUsers = new();
-        private static readonly TrackedUserLog PreviousUsersDistribution = new();
-        private static readonly TrackedUserLog EncounteredUsers = new();
 
         /// <summary>
         /// Folder to dump received trade data to.
@@ -39,16 +35,16 @@ namespace SysBot.Pokemon
         /// </summary>
         public int FailedBarrier { get; private set; }
 
-        private const int InjectBox = 0;
-        private const int InjectSlot = 0;
-
-        public PokeTradeBot(PokeTradeHub<PK8> hub, PokeBotState cfg) : base(cfg)
+        public PokeTradeBotSWSH(PokeTradeHub<PK8> hub, PokeBotState cfg) : base(cfg)
         {
             Hub = hub;
             TradeSettings = hub.Config.Trade;
             AbuseSettings = hub.Config.TradeAbuse;
             DumpSetting = hub.Config.Folder;
         }
+
+        // Cached offsets that stay the same per session.
+        private ulong OverworldOffset;
 
         public override async Task MainLoop(CancellationToken token)
         {
@@ -59,8 +55,9 @@ namespace SysBot.Pokemon
                 Log("Identifying trainer data of the host console.");
                 var sav = await IdentifyTrainer(token).ConfigureAwait(false);
                 RecentTrainerCache.SetRecentTrainer(sav);
+                await InitializeSessionOffsets(token).ConfigureAwait(false);
 
-                Log($"Starting main {nameof(PokeTradeBot)} loop.");
+                Log($"Starting main {nameof(PokeTradeBotSWSH)} loop.");
                 await InnerLoop(sav, token).ConfigureAwait(false);
             }
             catch (Exception e)
@@ -68,7 +65,7 @@ namespace SysBot.Pokemon
                 Log(e.Message);
             }
 
-            Log($"Ending {nameof(PokeTradeBot)} loop.");
+            Log($"Ending {nameof(PokeTradeBotSWSH)} loop.");
             await HardStop().ConfigureAwait(false);
         }
 
@@ -156,7 +153,7 @@ namespace SysBot.Pokemon
             }
 
             const int interval = 10;
-            if (waitCounter % interval == interval-1 && Hub.Config.AntiIdle)
+            if (waitCounter % interval == interval - 1 && Hub.Config.AntiIdle)
                 await Click(B, 1_000, token).ConfigureAwait(false);
             else
                 await Task.Delay(1_000, token).ConfigureAwait(false);
@@ -218,7 +215,7 @@ namespace SysBot.Pokemon
             while (!token.IsCancellationRequested && Config.NextRoutineType == PokeRoutineType.SurpriseTrade)
             {
                 var pkm = Hub.Ledy.Pool.GetRandomSurprise();
-                await EnsureConnectedToYComm(Hub.Config, token).ConfigureAwait(false);
+                await EnsureConnectedToYComm(OverworldOffset, Hub.Config, token).ConfigureAwait(false);
                 var _ = await PerformSurpriseTrade(sav, pkm, token).ConfigureAwait(false);
             }
         }
@@ -228,7 +225,7 @@ namespace SysBot.Pokemon
             // Update Barrier Settings
             UpdateBarrier(poke.IsSynchronized);
             poke.TradeInitialize(this);
-            await EnsureConnectedToYComm(Hub.Config, token).ConfigureAwait(false);
+            await EnsureConnectedToYComm(OverworldOffset, Hub.Config, token).ConfigureAwait(false);
             Hub.Config.Stream.EndEnterCode(this);
 
             if (await CheckIfSoftBanned(token).ConfigureAwait(false))
@@ -236,18 +233,18 @@ namespace SysBot.Pokemon
 
             var toSend = poke.TradeData;
             if (toSend.Species != 0)
-                await SetBoxPokemon(toSend, InjectBox, InjectSlot, token, sav).ConfigureAwait(false);
+                await SetBoxPokemon(toSend, 0, 0, token, sav).ConfigureAwait(false);
 
-            if (!await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+            if (!await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
             {
-                await ExitTrade(Hub.Config, true, token).ConfigureAwait(false);
+                await ExitTrade(true, token).ConfigureAwait(false);
                 return PokeTradeResult.RecoverStart;
             }
 
             while (await CheckIfSearchingForLinkTradePartner(token).ConfigureAwait(false))
             {
                 Log("Still searching, resetting bot position.");
-                await ResetTradePosition(Hub.Config, token).ConfigureAwait(false);
+                await ResetTradePosition(token).ConfigureAwait(false);
             }
 
             Log("Opening Y-Comm menu.");
@@ -283,12 +280,12 @@ namespace SysBot.Pokemon
 
             // Confirming and return to overworld.
             var delay_count = 0;
-            while (!await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+            while (!await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
             {
                 if (delay_count++ >= 5)
                 {
                     // Too many attempts, recover out of the trade.
-                    await ExitTrade(Hub.Config, true, token).ConfigureAwait(false);
+                    await ExitTrade(true, token).ConfigureAwait(false);
                     return PokeTradeResult.RecoverPostLinkCode;
                 }
 
@@ -306,7 +303,7 @@ namespace SysBot.Pokemon
                 return PokeTradeResult.RoutineCancel;
             if (!partnerFound)
             {
-                await ResetTradePosition(Hub.Config, token).ConfigureAwait(false);
+                await ResetTradePosition(token).ConfigureAwait(false);
                 return PokeTradeResult.NoTrainerFound;
             }
 
@@ -317,19 +314,19 @@ namespace SysBot.Pokemon
             var trainerName = await GetTradePartnerName(TradeMethod.LinkTrade, token).ConfigureAwait(false);
             var trainerTID = await GetTradePartnerTID7(TradeMethod.LinkTrade, token).ConfigureAwait(false);
             var trainerNID = await GetTradePartnerNID(token).ConfigureAwait(false);
-            RecordUtil<PokeTradeBot>.Record($"Initiating\t{trainerNID:X16}\t{trainerName}\t{poke.Trainer.TrainerName}\t{poke.Trainer.ID}\t{poke.ID}\t{toSend.EncryptionConstant:X8}");
+            RecordUtil<PokeTradeBotSWSH>.Record($"Initiating\t{trainerNID:X16}\t{trainerName}\t{poke.Trainer.TrainerName}\t{poke.Trainer.ID}\t{poke.ID}\t{toSend.EncryptionConstant:X8}");
             Log($"Found Link Trade partner: {trainerName}-{trainerTID} (ID: {trainerNID})");
 
-            var partnerCheck = await CheckPartnerReputation(poke, trainerNID, trainerName, token).ConfigureAwait(false);
+            var partnerCheck = await CheckPartnerReputation(this, poke, trainerNID, trainerName, AbuseSettings, PreviousUsers, PreviousUsersDistribution, token);
             if (partnerCheck != PokeTradeResult.Success)
             {
-                await ExitSeedCheckTrade(Hub.Config, token).ConfigureAwait(false);
+                await ExitSeedCheckTrade(token).ConfigureAwait(false);
                 return partnerCheck;
             }
 
             if (!await IsInBox(token).ConfigureAwait(false))
             {
-                await ExitTrade(Hub.Config, true, token).ConfigureAwait(false);
+                await ExitTrade(true, token).ConfigureAwait(false);
                 return PokeTradeResult.RecoverOpenBox;
             }
 
@@ -355,7 +352,7 @@ namespace SysBot.Pokemon
             var oldEC = await Connection.ReadBytesAsync(LinkTradePartnerPokemonOffset, 4, token).ConfigureAwait(false);
             if (offered is null)
             {
-                await ExitSeedCheckTrade(Hub.Config, token).ConfigureAwait(false);
+                await ExitSeedCheckTrade(token).ConfigureAwait(false);
                 return PokeTradeResult.TrainerTooSlow;
             }
 
@@ -370,31 +367,31 @@ namespace SysBot.Pokemon
             (toSend, update) = await GetEntityToSend(sav, poke, offered, oldEC, toSend, trainer, token).ConfigureAwait(false);
             if (update != PokeTradeResult.Success)
             {
-                await ExitTrade(Hub.Config, false, token).ConfigureAwait(false);
+                await ExitTrade(false, token).ConfigureAwait(false);
                 return update;
             }
 
             var tradeResult = await ConfirmAndStartTrading(poke, token).ConfigureAwait(false);
             if (tradeResult != PokeTradeResult.Success)
             {
-                await ExitTrade(Hub.Config, false, token).ConfigureAwait(false);
+                await ExitTrade(false, token).ConfigureAwait(false);
                 return tradeResult;
             }
 
             if (token.IsCancellationRequested)
             {
-                await ExitTrade(Hub.Config, false, token).ConfigureAwait(false);
+                await ExitTrade(false, token).ConfigureAwait(false);
                 return PokeTradeResult.RoutineCancel;
             }
 
             // Trade was Successful!
-            var received = await ReadBoxPokemon(InjectBox, InjectSlot, token).ConfigureAwait(false);
+            var received = await ReadBoxPokemon(0, 0, token).ConfigureAwait(false);
             // Pokémon in b1s1 is same as the one they were supposed to receive (was never sent).
             if (SearchUtil.HashByDetails(received) == SearchUtil.HashByDetails(toSend) && received.Checksum == toSend.Checksum)
             {
                 Log("User did not complete the trade.");
-                RecordUtil<PokeTradeBot>.Record($"Cancelled\t{trainerNID:X16}\t{trainerName}\t{poke.Trainer.TrainerName}\\t{poke.ID}\t{toSend.EncryptionConstant:X8}\t{offered.EncryptionConstant:X8}");
-                await ExitTrade(Hub.Config, false, token).ConfigureAwait(false);
+                RecordUtil<PokeTradeBotSWSH>.Record($"Cancelled\t{trainerNID:X16}\t{trainerName}\t{poke.Trainer.TrainerName}\\t{poke.ID}\t{toSend.EncryptionConstant:X8}\t{offered.EncryptionConstant:X8}");
+                await ExitTrade(false, token).ConfigureAwait(false);
                 return PokeTradeResult.TrainerTooSlow;
             }
 
@@ -402,11 +399,15 @@ namespace SysBot.Pokemon
             Log("User completed the trade.");
             poke.TradeFinished(this, received);
 
-            RecordUtil<PokeTradeBot>.Record($"Finished\t{trainerNID:X16}\t{toSend.EncryptionConstant:X8}\t{received.EncryptionConstant:X8}");
+            RecordUtil<PokeTradeBotSWSH>.Record($"Finished\t{trainerNID:X16}\t{toSend.EncryptionConstant:X8}\t{received.EncryptionConstant:X8}");
 
             // Only log if we completed the trade.
             UpdateCountsAndExport(poke, received, toSend);
-            await ExitTrade(Hub.Config, false, token).ConfigureAwait(false);
+
+            // Log for Trade Abuse tracking.
+            LogSuccessfulTrades(poke, trainerNID, trainerName);
+
+            await ExitTrade(false, token).ConfigureAwait(false);
             return PokeTradeResult.Success;
         }
 
@@ -431,7 +432,7 @@ namespace SysBot.Pokemon
             if (tradeswsh.Valid)
             {
                 Log($"Pokemon is valid, use trade partnerInfo");
-                await SetBoxPokemon(cln, InjectBox, InjectSlot, token, sav).ConfigureAwait(false);
+                await SetBoxPokemon(cln, 0, 0, token, sav).ConfigureAwait(false);
             }
             else
             {
@@ -439,116 +440,6 @@ namespace SysBot.Pokemon
             }
 
             return tradeswsh.Valid;
-        }
-
-        private async Task<PokeTradeResult> CheckPartnerReputation(PokeTradeDetail<PK8> poke, ulong TrainerNID, string TrainerName, CancellationToken token)
-        {
-            bool quit = false;
-            var user = poke.Trainer;
-            var isDistribution = poke.Type == PokeTradeType.Random;
-            var useridmsg = isDistribution ? "" : $" ({user.ID})";
-            var list = isDistribution ? PreviousUsersDistribution : PreviousUsers;
-
-            var cooldown = list.TryGetPrevious(TrainerNID);
-            if (cooldown != null)
-            {
-                var delta = DateTime.Now - cooldown.Time;
-                Log($"Last saw {user.TrainerName} {delta.TotalMinutes:F1} minutes ago (OT: {TrainerName}).");
-
-                var cd = AbuseSettings.TradeCooldown;
-                if (cd != 0 && TimeSpan.FromMinutes(cd) > delta)
-                {
-                    poke.Notifier.SendNotification(this, poke, "You have ignored the trade cooldown set by the bot owner. The owner has been notified.");
-                    var msg = $"Found {user.TrainerName}{useridmsg} ignoring the {cd} minute trade cooldown. Last encountered {delta.TotalMinutes:F1} minutes ago.";
-                    if (AbuseSettings.EchoNintendoOnlineIDCooldown)
-                        msg += $"\nID: {TrainerNID}";
-                    if (!string.IsNullOrWhiteSpace(AbuseSettings.CooldownAbuseEchoMention))
-                        msg = $"{AbuseSettings.CooldownAbuseEchoMention} {msg}";
-                    EchoUtil.Echo(msg);
-                    quit = true;
-                }
-            }
-
-            if (!isDistribution)
-            {
-                var previousEncounter = EncounteredUsers.TryRegister(poke.Trainer.ID, TrainerName, poke.Trainer.ID);
-                if (previousEncounter != null && previousEncounter.Name != TrainerName)
-                {
-                    if (AbuseSettings.TradeAbuseAction != TradeAbuseAction.Ignore)
-                    {
-                        if (AbuseSettings.TradeAbuseAction == TradeAbuseAction.BlockAndQuit)
-                        {
-                            await BlockUser(token).ConfigureAwait(false);
-                            if (AbuseSettings.BanIDWhenBlockingUser)
-                            {
-                                AbuseSettings.BannedIDs.AddIfNew(new[] { GetReference(TrainerName, TrainerNID, "in-game block for sending to multiple in-game players") });
-                                Log($"Added {TrainerNID} to the BannedIDs list.");
-                            }
-                        }
-                        quit = true;
-                    }
-
-                    var msg = $"Found {user.TrainerName}{useridmsg} sending to multiple in-game players. Previous OT: {previousEncounter.Name}, Current OT: {TrainerName}";
-                    if (AbuseSettings.EchoNintendoOnlineIDMultiRecipients)
-                        msg += $"\nID: {TrainerNID}";
-                    if (!string.IsNullOrWhiteSpace(AbuseSettings.MultiRecipientEchoMention))
-                        msg = $"{AbuseSettings.MultiRecipientEchoMention} {msg}";
-                    EchoUtil.Echo(msg);
-                }
-            }
-
-            if (quit)
-                return PokeTradeResult.SuspiciousActivity;
-
-            // Try registering the partner in our list of recently seen.
-            // Get back the details of their previous interaction.
-            var previous = isDistribution
-                ? list.TryRegister(TrainerNID, TrainerName)
-                : list.TryRegister(TrainerNID, TrainerName, poke.Trainer.ID);
-            if (previous != null && previous.NetworkID == TrainerNID && previous.RemoteID != user.ID && !isDistribution)
-            {
-                var delta = DateTime.Now - previous.Time;
-                if (delta < TimeSpan.FromMinutes(AbuseSettings.TradeAbuseExpiration) && AbuseSettings.TradeAbuseAction != TradeAbuseAction.Ignore)
-                {
-                    if (AbuseSettings.TradeAbuseAction == TradeAbuseAction.BlockAndQuit)
-                    {
-                        await BlockUser(token).ConfigureAwait(false);
-                        if (AbuseSettings.BanIDWhenBlockingUser)
-                        {
-                            AbuseSettings.BannedIDs.AddIfNew(new[] { GetReference(TrainerName, TrainerNID, "in-game block for multiple accounts") });
-                            Log($"Added {TrainerNID} to the BannedIDs list.");
-                        }
-                    }
-                    quit = true;
-                }
-
-                var msg = $"Found {user.TrainerName}{useridmsg} using multiple accounts.\nPreviously encountered {previous.Name} ({previous.RemoteID}) {delta.TotalMinutes:F1} minutes ago on OT: {TrainerName}.";
-                if (AbuseSettings.EchoNintendoOnlineIDMulti)
-                    msg += $"\nID: {TrainerNID}";
-                if (!string.IsNullOrWhiteSpace(AbuseSettings.MultiAbuseEchoMention))
-                    msg = $"{AbuseSettings.MultiAbuseEchoMention} {msg}";
-                EchoUtil.Echo(msg);
-            }
-
-            if (quit)
-                return PokeTradeResult.SuspiciousActivity;
-
-            var entry = AbuseSettings.BannedIDs.List.Find(z => z.ID == TrainerNID);
-            if (entry != null)
-            {
-                if (AbuseSettings.BlockDetectedBannedUser)
-                    await BlockUser(token).ConfigureAwait(false);
-
-                var msg = $"{user.TrainerName}{useridmsg} is a banned user, and was encountered in-game using OT: {TrainerName}.";
-                if (!string.IsNullOrWhiteSpace(entry.Comment))
-                    msg += $"\nUser was banned for: {entry.Comment}";
-                if (!string.IsNullOrWhiteSpace(AbuseSettings.BannedIDMatchEchoMention))
-                    msg = $"{AbuseSettings.BannedIDMatchEchoMention} {msg}";
-                EchoUtil.Echo(msg);
-                return PokeTradeResult.SuspiciousActivity;
-            }
-
-            return PokeTradeResult.Success;
         }
 
         private static RemoteControlAccess GetReference(string name, ulong id, string comment) => new()
@@ -592,7 +483,7 @@ namespace SysBot.Pokemon
             for (int i = 0; i < Hub.Config.Trade.MaxTradeConfirmTime; i++)
             {
                 // If we are in a Trade Evolution/PokeDex Entry and the Trade Partner quits, we land on the Overworld
-                if (await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+                if (await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
                     return PokeTradeResult.TrainerLeft;
                 if (await IsUserBeingShifty(detail, token).ConfigureAwait(false))
                     return PokeTradeResult.SuspiciousActivity;
@@ -607,7 +498,7 @@ namespace SysBot.Pokemon
                 }
             }
 
-            if (await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+            if (await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
                 return PokeTradeResult.TrainerLeft;
 
             return PokeTradeResult.Success;
@@ -668,7 +559,7 @@ namespace SysBot.Pokemon
             }
 
             await Click(A, 0_800, token).ConfigureAwait(false);
-            await SetBoxPokemon(clone, InjectBox, InjectSlot, token, sav).ConfigureAwait(false);
+            await SetBoxPokemon(clone, 0, 0, token, sav).ConfigureAwait(false);
 
             for (int i = 0; i < 5; i++)
                 await Click(A, 0_500, token).ConfigureAwait(false);
@@ -700,7 +591,7 @@ namespace SysBot.Pokemon
 
                 poke.SendNotification(this, "Injecting the requested Pokémon.");
                 await Click(A, 0_800, token).ConfigureAwait(false);
-                await SetBoxPokemon(toSend, InjectBox, InjectSlot, token, sav).ConfigureAwait(false);
+                await SetBoxPokemon(toSend, 0, 0, token, sav).ConfigureAwait(false);
                 await Task.Delay(2_500, token).ConfigureAwait(false);
             }
             else if (config.LedyQuitIfNoMatch)
@@ -718,10 +609,23 @@ namespace SysBot.Pokemon
             return (toSend, PokeTradeResult.Success);
         }
 
+        // For pointer offsets that don't change per session are accessed frequently, so set these each time we start.
+        private async Task InitializeSessionOffsets(CancellationToken token)
+        {
+            Log("Caching session offsets...");
+            OverworldOffset = await SwitchConnection.PointerAll(Offsets.OverworldPointer, token).ConfigureAwait(false);
+        }
+
         protected virtual async Task<bool> IsUserBeingShifty(PokeTradeDetail<PK8> detail, CancellationToken token)
         {
             await Task.CompletedTask.ConfigureAwait(false);
             return false;
+        }
+
+        private async Task RestartGameSWSH(CancellationToken token)
+        {
+            await ReOpenGame(Hub.Config, token).ConfigureAwait(false);
+            await InitializeSessionOffsets(token).ConfigureAwait(false);
         }
 
         private async Task<PokeTradeResult> ProcessDumpTradeAsync(PokeTradeDetail<PK8> detail, CancellationToken token)
@@ -733,7 +637,7 @@ namespace SysBot.Pokemon
             var bctr = 0;
             while (ctr < Hub.Config.Trade.MaxDumpsPerTrade && DateTime.Now - start < time)
             {
-                if (await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+                if (await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
                     break;
                 if (bctr++ % 3 == 0)
                     await Click(B, 0_100, token).ConfigureAwait(false);
@@ -773,7 +677,7 @@ namespace SysBot.Pokemon
             }
 
             Log($"Ended Dump loop after processing {ctr} Pokémon.");
-            await ExitSeedCheckTrade(Hub.Config, token).ConfigureAwait(false);
+            await ExitSeedCheckTrade(token).ConfigureAwait(false);
             if (ctr == 0)
                 return PokeTradeResult.TrainerTooSlow;
 
@@ -796,18 +700,18 @@ namespace SysBot.Pokemon
                 await UnSoftBan(token).ConfigureAwait(false);
 
             Log("Starting next Surprise Trade. Getting data...");
-            await SetBoxPokemon(pkm, InjectBox, InjectSlot, token, sav).ConfigureAwait(false);
+            await SetBoxPokemon(pkm, 0, 0, token, sav).ConfigureAwait(false);
 
-            if (!await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+            if (!await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
             {
-                await ExitTrade(Hub.Config, true, token).ConfigureAwait(false);
+                await ExitTrade(true, token).ConfigureAwait(false);
                 return PokeTradeResult.RecoverStart;
             }
 
             if (await CheckIfSearchingForSurprisePartner(token).ConfigureAwait(false))
             {
                 Log("Still searching, resetting bot position.");
-                await ResetTradePosition(Hub.Config, token).ConfigureAwait(false);
+                await ResetTradePosition(token).ConfigureAwait(false);
             }
 
             Log("Opening Y-Comm menu.");
@@ -827,7 +731,7 @@ namespace SysBot.Pokemon
 
             if (!await IsInBox(token).ConfigureAwait(false))
             {
-                await ExitTrade(Hub.Config, true, token).ConfigureAwait(false);
+                await ExitTrade(true, token).ConfigureAwait(false);
                 return PokeTradeResult.RecoverPostLinkCode;
             }
 
@@ -839,7 +743,7 @@ namespace SysBot.Pokemon
                 return PokeTradeResult.RoutineCancel;
 
             Log("Confirming...");
-            while (!await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+            while (!await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
                 await Click(A, 0_800, token).ConfigureAwait(false);
 
             if (token.IsCancellationRequested)
@@ -848,9 +752,9 @@ namespace SysBot.Pokemon
             // Let Surprise Trade be sent out before checking if we're back to the Overworld.
             await Task.Delay(3_000, token).ConfigureAwait(false);
 
-            if (!await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+            if (!await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
             {
-                await ExitTrade(Hub.Config, true, token).ConfigureAwait(false);
+                await ExitTrade(true, token).ConfigureAwait(false);
                 return PokeTradeResult.RecoverReturnOverworld;
             }
 
@@ -866,7 +770,7 @@ namespace SysBot.Pokemon
 
             if (!partnerFound)
             {
-                await ResetTradePosition(Hub.Config, token).ConfigureAwait(false);
+                await ResetTradePosition(token).ConfigureAwait(false);
                 return PokeTradeResult.NoTrainerFound;
             }
 
@@ -896,10 +800,10 @@ namespace SysBot.Pokemon
             if (token.IsCancellationRequested)
                 return PokeTradeResult.RoutineCancel;
 
-            if (await IsOnOverworld(Hub.Config, token).ConfigureAwait(false))
+            if (await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
                 Log("Trade complete!");
             else
-                await ExitTrade(Hub.Config, true, token).ConfigureAwait(false);
+                await ExitTrade(true, token).ConfigureAwait(false);
 
             if (DumpSetting.Dump && !string.IsNullOrEmpty(DumpSetting.DumpFolder))
                 DumpPokemon(DumpSetting.DumpFolder, "surprise", SurprisePoke);
@@ -910,7 +814,7 @@ namespace SysBot.Pokemon
 
         private async Task<PokeTradeResult> EndSeedCheckTradeAsync(PokeTradeDetail<PK8> detail, PK8 pk, CancellationToken token)
         {
-            await ExitSeedCheckTrade(Hub.Config, token).ConfigureAwait(false);
+            await ExitSeedCheckTrade(token).ConfigureAwait(false);
 
             detail.TradeFinished(this, pk);
 
@@ -1011,21 +915,21 @@ namespace SysBot.Pokemon
             return await ReadUntilChanged(offset, oldEC, waitms, waitInterval, false, token).ConfigureAwait(false);
         }
 
-        private async Task ExitTrade(PokeTradeHubConfig config, bool unexpected, CancellationToken token)
+        private async Task ExitTrade(bool unexpected, CancellationToken token)
         {
             if (unexpected)
                 Log("Unexpected behavior, recovering position.");
 
             int attempts = 0;
             int softBanAttempts = 0;
-            while (!await IsOnOverworld(config, token).ConfigureAwait(false))
+            while (!await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
             {
                 var screenID = await GetCurrentScreen(token).ConfigureAwait(false);
                 if (screenID == CurrentScreen_Softban)
                 {
                     softBanAttempts++;
                     if (softBanAttempts > 10)
-                        await ReOpenGame(config, token).ConfigureAwait(false);
+                        await RestartGameSWSH(token).ConfigureAwait(false);
                 }
 
                 attempts++;
@@ -1038,11 +942,11 @@ namespace SysBot.Pokemon
             }
         }
 
-        private async Task ExitSeedCheckTrade(PokeTradeHubConfig config, CancellationToken token)
+        private async Task ExitSeedCheckTrade(CancellationToken token)
         {
             // Seed Check Bot doesn't show anything, so it can skip the first B press.
             int attempts = 0;
-            while (!await IsOnOverworld(config, token).ConfigureAwait(false))
+            while (!await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
             {
                 attempts++;
                 if (attempts >= 15)
@@ -1055,13 +959,13 @@ namespace SysBot.Pokemon
             await Task.Delay(3_000, token).ConfigureAwait(false);
         }
 
-        private async Task ResetTradePosition(PokeTradeHubConfig config, CancellationToken token)
+        private async Task ResetTradePosition(CancellationToken token)
         {
             Log("Resetting bot position.");
 
             // Shouldn't ever be used while not on overworld.
-            if (!await IsOnOverworld(config, token).ConfigureAwait(false))
-                await ExitTrade(config, true, token).ConfigureAwait(false);
+            if (!await IsOnOverworld(OverworldOffset, token).ConfigureAwait(false))
+                await ExitTrade(true, token).ConfigureAwait(false);
 
             // Ensure we're searching before we try to reset a search.
             if (!await CheckIfSearchingForLinkTradePartner(token).ConfigureAwait(false))
@@ -1075,19 +979,6 @@ namespace SysBot.Pokemon
                 await Click(A, 1_500, token).ConfigureAwait(false);
             await Click(B, 1_500, token).ConfigureAwait(false);
             await Click(B, 1_500, token).ConfigureAwait(false);
-        }
-
-        // Blocks a user from the box during in-game trades.
-        protected async Task BlockUser(CancellationToken token)
-        {
-            Log("Blocking user in-game...");
-            await PressAndHold(RSTICK, 0_750, 0, token).ConfigureAwait(false);
-            await Click(DUP, 0_300, token).ConfigureAwait(false);
-            await Click(A, 1_300, token).ConfigureAwait(false);
-            await Click(A, 1_300, token).ConfigureAwait(false);
-            await Click(DUP, 0_300, token).ConfigureAwait(false);
-            await Click(A, 1_100, token).ConfigureAwait(false);
-            await Click(A, 1_100, token).ConfigureAwait(false);
         }
 
         private async Task<bool> CheckIfSearchingForLinkTradePartner(CancellationToken token)

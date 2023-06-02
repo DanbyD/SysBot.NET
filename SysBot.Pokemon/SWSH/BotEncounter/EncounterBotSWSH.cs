@@ -1,15 +1,15 @@
 ﻿using PKHeX.Core;
+using SysBot.Base;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using SysBot.Base;
 using static SysBot.Base.SwitchButton;
 using static SysBot.Base.SwitchStick;
 
 namespace SysBot.Pokemon
 {
-    public abstract class EncounterBot : PokeRoutineExecutor8, IEncounterBot
+    public abstract class EncounterBotSWSH : PokeRoutineExecutor8SWSH, IEncounterBot
     {
         protected readonly PokeTradeHub<PK8> Hub;
         private readonly IDumper DumpSetting;
@@ -20,7 +20,7 @@ namespace SysBot.Pokemon
         public ICountSettings Counts => Settings;
         public readonly IReadOnlyList<string> UnwantedMarks;
 
-        protected EncounterBot(PokeBotState cfg, PokeTradeHub<PK8> hub) : base(cfg)
+        protected EncounterBotSWSH(PokeBotState cfg, PokeTradeHub<PK8> hub) : base(cfg)
         {
             Hub = hub;
             Settings = Hub.Config.EncounterSWSH;
@@ -29,7 +29,10 @@ namespace SysBot.Pokemon
             StopConditionSettings.ReadUnwantedMarks(Hub.Config.StopConditions, out UnwantedMarks);
         }
 
-        private int encounterCount;
+        // Cached offsets that stay the same per session.
+        protected ulong OverworldOffset;
+
+        protected int encounterCount;
 
         public override async Task MainLoop(CancellationToken token)
         {
@@ -37,6 +40,8 @@ namespace SysBot.Pokemon
             Log("Identifying trainer data of the host console.");
             var sav = await IdentifyTrainer(token).ConfigureAwait(false);
             await InitializeHardware(settings, token).ConfigureAwait(false);
+
+            OverworldOffset = await SwitchConnection.PointerAll(Offsets.OverworldPointer, token).ConfigureAwait(false);
 
             try
             {
@@ -71,14 +76,9 @@ namespace SysBot.Pokemon
             var print = Hub.Config.StopConditions.GetPrintName(pk);
             Log($"Encounter: {encounterCount}{Environment.NewLine}{print}{Environment.NewLine}");
 
-            var legendary = Legal.Legends.Contains(pk.Species) || Legal.Mythicals.Contains(pk.Species) || Legal.SubLegends.Contains(pk.Species);
-            if (legendary)
-                Settings.AddCompletedLegends();
-            else
-                Settings.AddCompletedEncounters();
-
+            var folder = IncrementAndGetDumpFolder(pk);
             if (DumpSetting.Dump && !string.IsNullOrEmpty(DumpSetting.DumpFolder))
-                DumpPokemon(DumpSetting.DumpFolder, legendary ? "legends" : "encounters", pk);
+                DumpPokemon(DumpSetting.DumpFolder, folder, pk);
 
             if (!StopConditionSettings.EncounterFound(pk, DesiredMinIVs, DesiredMaxIVs, Hub.Config.StopConditions, UnwantedMarks))
                 return false;
@@ -95,7 +95,8 @@ namespace SysBot.Pokemon
                 ContinueAfterMatch.Continue             => "Continuing...",
                 ContinueAfterMatch.PauseWaitAcknowledge => "Waiting for instructions to continue.",
                 ContinueAfterMatch.StopExit             => "Stopping routine execution; restart the bot to search again.",
-                _ => throw new ArgumentOutOfRangeException(),
+                _ => throw new ArgumentOutOfRangeException("Match result type was invalid.", nameof(ContinueAfterMatch)),
+
             };
 
             if (!string.IsNullOrWhiteSpace(Hub.Config.StopConditions.MatchFoundEchoMention))
@@ -111,6 +112,29 @@ namespace SysBot.Pokemon
             while (IsWaiting)
                 await Task.Delay(1_000, token).ConfigureAwait(false);
             return false;
+        }
+
+        private string IncrementAndGetDumpFolder(PK8 pk)
+        {
+            var legendary = SpeciesCategory.IsLegendary(pk.Species) || SpeciesCategory.IsMythical(pk.Species) || SpeciesCategory.IsSubLegendary(pk.Species);
+            if (legendary)
+            {
+                Settings.AddCompletedLegends();
+                return "legends";
+            }
+            else if (pk.IsEgg)
+            {
+                Settings.AddCompletedEggs();
+                return "egg";
+            }
+            else if (pk.Species >= (int)Species.Dracozolt && pk.Species <= (int)Species.Arctovish)
+            {
+                Settings.AddCompletedFossils();
+                return "fossil";
+            }
+
+            Settings.AddCompletedEncounters();
+            return "encounters";
         }
 
         private bool IsWaiting;

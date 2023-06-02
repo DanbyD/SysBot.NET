@@ -1,12 +1,12 @@
-﻿using System;
+﻿using PKHeX.Core;
+using SysBot.Base;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using PKHeX.Core;
-using SysBot.Base;
-using static SysBot.Pokemon.PokeDataOffsetsSV;
 using static SysBot.Base.SwitchButton;
+using static SysBot.Pokemon.PokeDataOffsetsSV;
 
 namespace SysBot.Pokemon
 {
@@ -72,18 +72,30 @@ namespace SysBot.Pokemon
 
         public async Task<SAV9SV> IdentifyTrainer(CancellationToken token)
         {
+            // Check if botbase is on the correct version or later.
+            await VerifyBotbaseVersion(token).ConfigureAwait(false);
+
             // Check title so we can warn if mode is incorrect.
             string title = await SwitchConnection.GetTitleID(token).ConfigureAwait(false);
             if (title is not (ScarletID or VioletID))
                 throw new Exception($"{title} is not a valid SV title. Is your mode correct?");
 
+            // Verify the game version.
+            var game_version = await SwitchConnection.GetGameInfo("version", token).ConfigureAwait(false);
+            if (!game_version.SequenceEqual(SVGameVersion))
+                throw new Exception($"Game version is not supported. Expected version {SVGameVersion}, and current game version is {game_version}.");
+
             var sav = await GetFakeTrainerSAV(token).ConfigureAwait(false);
             InitSaveData(sav);
 
             if (!IsValidTrainerData())
-                throw new Exception("Trainer data is not valid. Refer to the SysBot.NET wiki for bad or no trainer data.");
+            {
+                await CheckForRAMShiftingApps(token).ConfigureAwait(false);
+                throw new Exception("训练家数据无效。请参考https://docs.qq.com/doc/DSWNwV1pLVnZudnJF");
+            }
+
             if (await GetTextSpeed(token).ConfigureAwait(false) < TextSpeedOption.Fast)
-                throw new Exception("Text speed should be set to FAST. Fix this for correct operation.");
+                throw new Exception("请在游戏中设置文本速度为快速，然后重启机器人");
 
             return sav;
         }
